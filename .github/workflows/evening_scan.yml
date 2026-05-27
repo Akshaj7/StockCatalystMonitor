@@ -2,7 +2,7 @@ name: Evening Scan
 
 on:
   schedule:
-    - cron: '0 21 * * 1-5'   # 5 PM ET (UTC-4 summer) weekdays — end-of-day sweep
+    - cron: '0 17 * * 1-5'   # 5 PM GMT weekdays — end-of-day sweep
   workflow_dispatch:
 
 permissions:

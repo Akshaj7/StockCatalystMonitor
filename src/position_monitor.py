@@ -484,7 +484,11 @@ def _build_no_alert_html(
 # ---------------------------------------------------------------------------
 
 def _should_send_checkin(ticker: str, sent_data: dict) -> bool:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now   = datetime.now(timezone.utc)
+    # Only send check-in during 8 AM – 9 PM GMT to avoid middle-of-night emails
+    if not (8 <= now.hour < 21):
+        return False
+    today = now.strftime("%Y-%m-%d")
     key   = _alert_key(ticker, "CHECKIN", today)
     return not _already_sent(key, sent_data)
 

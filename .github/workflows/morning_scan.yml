@@ -2,7 +2,7 @@ name: Morning Scan
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'   # 9 AM ET (UTC-4 summer) weekdays — SEC filings start arriving
+    - cron: '0 9 * * 1-5'    # 9 AM GMT weekdays — SEC filings start arriving
   workflow_dispatch:           # Also runnable manually from GitHub Actions tab
 
 permissions:

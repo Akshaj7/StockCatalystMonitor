@@ -2,7 +2,7 @@ name: Sunday Weekly Sweep
 
 on:
   schedule:
-    - cron: '0 14 * * 0'    # Sunday 10 AM ET — weekly deep scan covering the past 7 days
+    - cron: '0 10 * * 0'    # Sunday 10 AM GMT — weekly deep scan covering the past 7 days
   workflow_dispatch:
 
 permissions:
