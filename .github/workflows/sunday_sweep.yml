@@ -1,0 +1,32 @@
+name: Sunday Weekly Sweep
+
+on:
+  schedule:
+    - cron: '0 14 * * 0'    # Sunday 10 AM ET — weekly deep scan covering the past 7 days
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly sweep (7-day lookback)
+        env:
+          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
+          SMS_EMAIL:          ${{ secrets.SMS_EMAIL }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+        run: python src/morning_scan.py --days 7 --label "Weekly Sweep"

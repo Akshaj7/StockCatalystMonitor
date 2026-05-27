@@ -1,0 +1,27 @@
+{
+  "email": {
+    "sender": "",
+    "recipient": "",
+    "sms_gateway": ""
+  },
+  "scanning": {
+    "morning_scan_time": "06:00",
+    "evening_scan_time": "16:30",
+    "position_check_interval_minutes": 30,
+    "instant_alert_check_minutes": 30,
+    "market_open": "09:30",
+    "market_close": "16:00"
+  },
+  "filters": {
+    "merger_keywords": [
+      "agreement and plan of merger",
+      "merger agreement",
+      "going private",
+      "tender offer",
+      "definitive agreement",
+      "strategic alternatives"
+    ],
+    "insider_minimum_purchase": 50000,
+    "insider_transaction_codes": ["P"]
+  }
+}

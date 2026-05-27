@@ -1,0 +1,39 @@
+name: Position Monitor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # Every 30 minutes, all day, all week
+  workflow_dispatch:
+
+permissions:
+  contents: write              # Needed to commit sent_alerts.json state back to repo
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Monitor positions
+        env:
+          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
+          SMS_EMAIL:          ${{ secrets.SMS_EMAIL }}
+        run: python src/position_monitor.py
+
+      - name: Commit state if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/sent_alerts.json
+          git diff --staged --quiet || git commit -m "Update sent_alerts.json [skip ci]"
+          git push

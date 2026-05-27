@@ -1,0 +1,32 @@
+name: Evening Scan
+
+on:
+  schedule:
+    - cron: '0 21 * * 1-5'   # 5 PM ET (UTC-4 summer) weekdays — end-of-day sweep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evening-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run evening scan
+        env:
+          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
+          SMS_EMAIL:          ${{ secrets.SMS_EMAIL }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+        run: python src/morning_scan.py --evening

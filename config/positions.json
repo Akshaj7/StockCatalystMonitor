@@ -1,0 +1,35 @@
+{
+  "positions": [
+    {
+      "ticker": "DXYZ",
+      "company_name": "Destiny Tech100 Inc",
+      "entry_price": 10.5,
+      "shares": 15.0,
+      "position_value": 105.0,
+      "thesis_type": "pre_ipo_speculation",
+      "thesis_description": "SpaceX pre-IPO play via closed end fund.",
+      "target_exit": 80.0,
+      "stop_loss": 45.0,
+      "date_entered": "2024-01-15",
+      "instant_alert_triggers": [
+        "Space Exploration Technologies",
+        "Space Exploration Technologies Corp",
+        "SpaceX initial public offering",
+        "DXYZ merger",
+        "Destiny Tech100 8-K"
+      ],
+      "ipo_company_keywords": [
+        "Space Exploration Technologies",
+        "SpaceX"
+      ],
+      "sell_signals": [
+        "SpaceX S-1 filed",
+        "SpaceX IPO date announced",
+        "Elon Musk confirms IPO timeline",
+        "DXYZ premium collapses"
+      ],
+      "monitor_frequency_minutes": 30,
+      "notes": "Buy rumor sell news strategy. Exit BEFORE IPO not after."
+    }
+  ]
+}

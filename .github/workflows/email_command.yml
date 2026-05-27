@@ -1,0 +1,38 @@
+name: Email Command Processor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # Every 30 minutes, all day
+  workflow_dispatch:           # Also runnable manually
+
+permissions:
+  contents: write              # Needed to commit updated positions.json back to repo
+
+jobs:
+  process-commands:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Process command emails
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python src/email_command.py
+
+      - name: Commit updated positions.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/positions.json
+          git diff --staged --quiet || git commit -m "Update positions via email command [skip ci]"
+          git push
