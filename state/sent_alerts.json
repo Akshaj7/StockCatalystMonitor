@@ -1,7 +1,8 @@
 {
   "sent_alerts": [
     "DXYZ:DAILY_DOWN:2026-05-27",
-    "DXYZ:CHECKIN:2026-05-27"
+    "DXYZ:CHECKIN:2026-05-27",
+    "DXYZ:DAILY_DOWN:2026-05-28"
   ],
-  "last_updated": "2026-05-27T08:52:51.942987+00:00"
+  "last_updated": "2026-05-28T00:06:03.672331+00:00"
 }
