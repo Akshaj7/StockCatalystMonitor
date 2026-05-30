@@ -47,7 +47,10 @@ def _smtp_send(
     body_html: Optional[str] = None,
     body_text: Optional[str] = None,
 ) -> bool:
-    """Low-level SMTP send. Returns True on success."""
+    """
+    Low-level SMTP send. Returns True if ALL recipients succeeded.
+    to_address may be a single address or a comma-separated list.
+    """
     if not sender or not app_password:
         logger.error("Gmail credentials not set (GMAIL_ADDRESS / GMAIL_APP_PASSWORD).")
         return False
@@ -55,10 +58,13 @@ def _smtp_send(
         logger.error("No recipient address — skipping send.")
         return False
 
+    # Support comma-separated recipient list
+    recipients = [a.strip() for a in to_address.split(",") if a.strip()]
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = f"Stock Monitor <{sender}>"
-    msg["To"]      = to_address
+    msg["To"]      = ", ".join(recipients)
 
     if body_text:
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
@@ -68,8 +74,8 @@ def _smtp_send(
     try:
         with smtplib.SMTP_SSL(GMAIL_HOST, GMAIL_PORT, timeout=30) as server:
             server.login(sender, app_password)
-            server.sendmail(sender, to_address, msg.as_string())
-        logger.info(f"Email sent → {to_address}  |  Subject: {subject}")
+            server.sendmail(sender, recipients, msg.as_string())
+        logger.info(f"Email sent → {', '.join(recipients)}  |  Subject: {subject}")
         return True
     except smtplib.SMTPAuthenticationError:
         logger.error(
