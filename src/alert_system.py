@@ -58,35 +58,38 @@ def _smtp_send(
         logger.error("No recipient address — skipping send.")
         return False
 
-    # Support comma-separated recipient list
+    # Support comma-separated recipient list — send individually for reliability
     recipients = [a.strip() for a in to_address.split(",") if a.strip()]
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"Stock Monitor <{sender}>"
-    msg["To"]      = ", ".join(recipients)
-
-    if body_text:
-        msg.attach(MIMEText(body_text, "plain", "utf-8"))
-    if body_html:
-        msg.attach(MIMEText(body_html, "html", "utf-8"))
-
+    all_ok = True
     try:
         with smtplib.SMTP_SSL(GMAIL_HOST, GMAIL_PORT, timeout=30) as server:
             server.login(sender, app_password)
-            server.sendmail(sender, recipients, msg.as_string())
-        logger.info(f"Email sent → {', '.join(recipients)}  |  Subject: {subject}")
-        return True
+            for addr in recipients:
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = subject
+                msg["From"]    = f"Stock Monitor <{sender}>"
+                msg["To"]      = addr
+                if body_text:
+                    msg.attach(MIMEText(body_text, "plain", "utf-8"))
+                if body_html:
+                    msg.attach(MIMEText(body_html, "html", "utf-8"))
+                try:
+                    server.sendmail(sender, addr, msg.as_string())
+                    logger.info(f"Email sent → {addr}  |  Subject: {subject}")
+                except smtplib.SMTPException as exc:
+                    logger.error(f"Failed to send to {addr}: {exc}")
+                    all_ok = False
     except smtplib.SMTPAuthenticationError:
         logger.error(
             "Gmail authentication failed. "
             "Check that GMAIL_APP_PASSWORD is the 16-char App Password, not your Gmail login."
         )
-    except smtplib.SMTPException as exc:
-        logger.error(f"SMTP error sending to {to_address}: {exc}")
+        return False
     except Exception as exc:
         logger.error(f"Unexpected error sending email: {exc}")
-    return False
+        return False
+    return all_ok
 
 
 # ---------------------------------------------------------------------------
