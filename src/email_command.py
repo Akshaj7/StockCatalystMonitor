@@ -3,19 +3,32 @@ Email Command Processor
 Reads your Gmail inbox for self-sent command emails and updates config automatically.
 Runs every 30 minutes via GitHub Actions.
 
-HOW TO USE:
-  Send an email to YOURSELF (same address you configured in settings).
-  Subject:  MONITOR COMMAND  (must contain "monitor" or "command" — case-insensitive)
-  Body:     One command per line. Examples:
-
-    set target_exit = 80
-    set stop_loss = 45
-    set shares = 15
-    set entry_price = 10.50
-    set DXYZ target_exit = 80      (explicit ticker if you have multiple positions)
-    status                          (sends back a full positions summary)
-
-After processing, you receive a confirmation email listing every change made.
+╔══════════════════════════════════════════════════════════════════════════╗
+║  FULL COMMAND REFERENCE                                                  ║
+║                                                                          ║
+║  Send an email TO YOURSELF with subject containing "monitor" or         ║
+║  "command". One command per line.                                        ║
+║                                                                          ║
+║  ── UPDATE a field ──────────────────────────────────────────────────── ║
+║  set target_exit = 90                                                    ║
+║  set stop_loss = 45                                                      ║
+║  set shares = 20                                                         ║
+║  set entry_price = 10.50                                                 ║
+║  set position_value = 500                                                ║
+║  set AAPL target_exit = 200       (specify ticker for multi-position)   ║
+║                                                                          ║
+║  ── ADD a new stock ─────────────────────────────────────────────────── ║
+║  add AAPL entry=182.50 shares=5 target=220 stop=160                     ║
+║  add TSLA entry=250 shares=3 target=400 stop=200 name=Tesla Inc         ║
+║                                                                          ║
+║  ── REMOVE a stock ──────────────────────────────────────────────────── ║
+║  remove AAPL                                                             ║
+║                                                                          ║
+║  ── INFO commands ───────────────────────────────────────────────────── ║
+║  status          (full positions table with prices)                     ║
+║  list            (same as status)                                        ║
+║  help            (sends back this full command guide)                   ║
+╚══════════════════════════════════════════════════════════════════════════╝
 """
 
 import email as emaillib
@@ -37,8 +50,9 @@ logger = setup_logging("email_command")
 
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
+HEADER_BG = "#0D1B2A"
 
-# Fields the user is allowed to update via email
+# ── Fields allowed in "set" commands ──────────────────────────────────────────
 ALLOWED_FIELDS = {
     "target_exit":    float,
     "stop_loss":      float,
@@ -47,15 +61,32 @@ ALLOWED_FIELDS = {
     "position_value": float,
 }
 
-# Subject must contain one of these words (case-insensitive) to be treated as a command email
-SUBJECT_TRIGGERS = ["monitor", "command", "set ", "status"]
+# ── Field aliases for "add" command (short form → canonical name) ──────────────
+ADD_FIELD_ALIASES = {
+    "entry":          "entry_price",
+    "entry_price":    "entry_price",
+    "target":         "target_exit",
+    "target_exit":    "target_exit",
+    "stop":           "stop_loss",
+    "stop_loss":      "stop_loss",
+    "shares":         "shares",
+    "name":           "company_name",
+    "company":        "company_name",
+    "company_name":   "company_name",
+    "notes":          "notes",
+    "thesis":         "notes",
+}
 
-HEADER_BG = "#0D1B2A"
+# Required fields when adding a new position
+ADD_REQUIRED = {"entry_price", "shares", "target_exit", "stop_loss"}
+
+# Subject must contain one of these to be treated as a command email
+SUBJECT_TRIGGERS = ["monitor", "command", "set ", "status", "add ", "remove", "help"]
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # IMAP helpers
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _connect(gmail_address: str, app_password: str) -> Optional[imaplib.IMAP4_SSL]:
     try:
@@ -76,49 +107,41 @@ def _decode_str(raw) -> str:
 
 
 def _get_plain_body(msg) -> str:
-    """Extract plain-text body from an email.Message object."""
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True)
-                return _decode_str(payload)
+                return _decode_str(part.get_payload(decode=True))
     else:
-        payload = msg.get_payload(decode=True)
-        return _decode_str(payload)
+        return _decode_str(msg.get_payload(decode=True))
     return ""
 
 
 def _load_processed_uids() -> set:
-    """Load previously processed email UIDs to avoid reprocessing."""
     path = ROOT / "state" / "processed_command_uids.json"
     if path.exists():
-        return set(json.load(open(path)))
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
     return set()
 
 
 def _save_processed_uids(uids: set) -> None:
     path = ROOT / "state" / "processed_command_uids.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    json.dump(list(uids), open(path, "w"))
+    with open(path, "w") as f:
+        json.dump(list(uids), f)
 
 
 def _strip_quoted_reply(body: str) -> str:
-    """
-    Remove quoted reply text so we only parse the NEW lines the user typed.
-    Strips:  lines starting with '>'
-             Gmail/Outlook 'On ... wrote:' reply headers
-             everything after a '-- ' signature separator
-    """
     clean_lines = []
     for line in body.splitlines():
         stripped = line.strip()
-        # Stop at signature separator
         if stripped == "--":
             break
-        # Skip quoted lines
         if stripped.startswith(">"):
             continue
-        # Skip "On Mon, 26 May ... wrote:" reply headers (single or multi-line)
         if re.match(r"^On .{5,80}wrote:$", stripped, re.IGNORECASE):
             continue
         clean_lines.append(line)
@@ -126,35 +149,25 @@ def _strip_quoted_reply(body: str) -> str:
 
 
 def _has_any_command(body: str) -> bool:
-    """Quick check: does the body contain at least one parseable command?"""
-    body_lower = body.lower()
-    return (
-        re.search(r"\bset\s+\w+\s*=\s*[0-9]", body_lower) is not None
-        or re.search(r"^status\s*$", body_lower, re.MULTILINE) is not None
+    bl = body.lower()
+    return bool(
+        re.search(r"\bset\s+\w+\s*=\s*[0-9]", bl)
+        or re.search(r"^status\s*$", bl, re.MULTILINE)
+        or re.search(r"^list\s*$", bl, re.MULTILINE)
+        or re.search(r"^help\s*$", bl, re.MULTILINE)
+        or re.search(r"^add\s+[A-Z]{1,5}\b", bl, re.MULTILINE)
+        or re.search(r"^remove\s+[A-Z]{1,5}\b", bl, re.MULTILINE)
     )
 
 
 def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[dict]:
-    """
-    Search INBOX and Sent Mail for self-sent command emails.
-    Replies go to Sent Mail (not INBOX) in Gmail, so we check both.
-    Uses folder-prefixed UID keys (e.g. "INBOX:21092", "SENT:995") to avoid
-    processing the same message twice across folders.
-    Each returned item: {uid, uid_str, folder_uid_key, subject, body}
-    """
     from datetime import timedelta
     processed = _load_processed_uids()
-
-    # Only look at emails from the last 7 days to keep searches fast
     since_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%d-%b-%Y")
 
-    folders = [
-        ("INBOX",               "INBOX"),
-        ("[Gmail]/Sent Mail",   "SENT"),
-    ]
-
+    folders = [("INBOX", "INBOX"), ("[Gmail]/Sent Mail", "SENT")]
     results = []
-    seen_message_ids: set = set()  # deduplicate across folders by Message-ID header
+    seen_message_ids: set = set()
 
     for folder_path, folder_key in folders:
         try:
@@ -164,16 +177,13 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
         except Exception:
             continue
 
-        status, data = client.search(
-            None, f'FROM "{from_address}" SINCE {since_date}'
-        )
+        status, data = client.search(None, f'FROM "{from_address}" SINCE {since_date}')
         if status != "OK" or not data[0]:
             continue
 
         for uid in data[0].split():
             uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
             folder_uid_key = f"{folder_key}:{uid_str}"
-
             if folder_uid_key in processed:
                 continue
 
@@ -183,7 +193,6 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
 
             msg = emaillib.message_from_bytes(msg_data[0][1])
 
-            # Deduplicate: same email can appear in both INBOX and Sent Mail
             message_id = msg.get("Message-ID", "")
             if message_id and message_id in seen_message_ids:
                 processed.add(folder_uid_key)
@@ -191,7 +200,6 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
             if message_id:
                 seen_message_ids.add(message_id)
 
-            # Decode subject
             raw_subject = msg.get("Subject", "")
             subject = ""
             for part, enc in decode_header(raw_subject):
@@ -199,10 +207,9 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
                     part.decode(enc or "utf-8", errors="replace") if isinstance(part, bytes) else part
                 )
 
-            raw_body = _get_plain_body(msg)
+            raw_body  = _get_plain_body(msg)
             clean_body = _strip_quoted_reply(raw_body)
 
-            # Silently skip emails with no commands
             if not _has_any_command(clean_body):
                 processed.add(folder_uid_key)
                 continue
@@ -220,52 +227,102 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
     return results
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Command parser
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_commands(body: str, default_ticker: str = "DXYZ") -> list[dict]:
     """
-    Parse command lines from email body.
+    Parse all command lines from the email body.
 
-    Supported formats (all case-insensitive):
-      set target_exit = 80
+    Supported commands:
+      set target_exit = 90
       set stop_loss = 45
-      set shares = 15
-      set DXYZ target_exit = 80
-      DXYZ target_exit = 80
+      set shares = 20
+      set entry_price = 10.50
+      set AAPL target_exit = 200
+      add AAPL entry=182.50 shares=5 target=220 stop=160
+      add AAPL entry=182.50 shares=5 target=220 stop=160 name=Apple Inc
+      remove AAPL
       status
+      list
+      help
     """
     commands = []
     for raw_line in body.splitlines():
         line = raw_line.strip()
         if not line or line.startswith(">") or line.startswith("--"):
-            continue  # skip quoted replies and signature separators
+            continue
 
-        # status command
-        if re.match(r"^status\s*$", line, re.IGNORECASE):
+        line_lower = line.lower()
+
+        # ── status / list ──────────────────────────────────────────────────
+        if re.match(r"^(status|list)\s*$", line, re.IGNORECASE):
             commands.append({"type": "status"})
             continue
 
-        # Pattern A: "set TICKER FIELD = VALUE"  e.g. "set DXYZ target_exit = 80"
+        # ── help ───────────────────────────────────────────────────────────
+        if re.match(r"^help\s*$", line, re.IGNORECASE):
+            commands.append({"type": "help"})
+            continue
+
+        # ── remove TICKER ─────────────────────────────────────────────────
+        m = re.match(r"^remove\s+([A-Z0-9]{1,6})\s*$", line, re.IGNORECASE)
+        if m:
+            commands.append({"type": "remove", "ticker": m.group(1).upper()})
+            continue
+
+        # ── add TICKER key=value ... ───────────────────────────────────────
+        m = re.match(r"^add\s+([A-Z0-9]{1,6})\s*(.*)?$", line, re.IGNORECASE)
+        if m:
+            ticker = m.group(1).upper()
+            rest   = m.group(2) or ""
+            fields: dict = {}
+            errors_local: list = []
+
+            # Parse key=value pairs — value may contain spaces (for name=Apple Inc)
+            # Strategy: find all key=value tokens; last one may grab rest of line
+            tokens = re.findall(r'(\w+)\s*=\s*("([^"]*)"|([\w\s.]+?)(?=\s+\w+=|$))', rest)
+            for tok in tokens:
+                alias = tok[0].lower()
+                raw_val = (tok[2] or tok[3]).strip()
+                canonical = ADD_FIELD_ALIASES.get(alias)
+                if not canonical:
+                    errors_local.append(f"Unknown field '{alias}' in add command")
+                    continue
+                if canonical == "company_name" or canonical == "notes":
+                    fields[canonical] = raw_val
+                else:
+                    try:
+                        fields[canonical] = float(raw_val)
+                    except ValueError:
+                        errors_local.append(f"'{raw_val}' is not a valid number for {alias}")
+
+            commands.append({
+                "type":   "add",
+                "ticker": ticker,
+                "fields": fields,
+                "errors": errors_local,
+            })
+            continue
+
+        # ── set TICKER FIELD = VALUE ───────────────────────────────────────
         m = re.match(
-            r"^set\s+([A-Z]{2,5})\s+(\w+)\s*=\s*([0-9]+(?:\.[0-9]+)?)$",
+            r"^set\s+([A-Z]{2,6})\s+(\w+)\s*=\s*([0-9]+(?:\.[0-9]+)?)$",
             line, re.IGNORECASE,
         )
         if m:
             field = m.group(2).lower()
             if field in ALLOWED_FIELDS:
                 commands.append({
-                    "type": "set",
-                    "ticker": m.group(1).upper(),
-                    "field": field,
-                    "value": float(m.group(3)),
+                    "type": "set", "ticker": m.group(1).upper(),
+                    "field": field, "value": float(m.group(3)),
                 })
             else:
-                commands.append({"type": "error", "message": f"Unknown field: '{m.group(2)}'"})
+                commands.append({"type": "error", "message": f"Unknown field: '{m.group(2)}'. Allowed: {', '.join(ALLOWED_FIELDS)}"})
             continue
 
-        # Pattern B: "set FIELD = VALUE"  e.g. "set target_exit = 80"
+        # ── set FIELD = VALUE ──────────────────────────────────────────────
         m = re.match(
             r"^set\s+(\w+)\s*=\s*([0-9]+(?:\.[0-9]+)?)$",
             line, re.IGNORECASE,
@@ -274,28 +331,24 @@ def _parse_commands(body: str, default_ticker: str = "DXYZ") -> list[dict]:
             field = m.group(1).lower()
             if field in ALLOWED_FIELDS:
                 commands.append({
-                    "type": "set",
-                    "ticker": default_ticker,
-                    "field": field,
-                    "value": float(m.group(2)),
+                    "type": "set", "ticker": default_ticker,
+                    "field": field, "value": float(m.group(2)),
                 })
             else:
-                commands.append({"type": "error", "message": f"Unknown field: '{m.group(1)}'"})
+                commands.append({"type": "error", "message": f"Unknown field: '{m.group(1)}'. Allowed: {', '.join(ALLOWED_FIELDS)}"})
             continue
 
-        # Pattern C: "TICKER FIELD = VALUE"  e.g. "DXYZ target_exit = 80"
+        # ── TICKER FIELD = VALUE ───────────────────────────────────────────
         m = re.match(
-            r"^([A-Z]{2,5})\s+(\w+)\s*=\s*([0-9]+(?:\.[0-9]+)?)$",
+            r"^([A-Z]{2,6})\s+(\w+)\s*=\s*([0-9]+(?:\.[0-9]+)?)$",
             line, re.IGNORECASE,
         )
         if m:
             field = m.group(2).lower()
             if field in ALLOWED_FIELDS:
                 commands.append({
-                    "type": "set",
-                    "ticker": m.group(1).upper(),
-                    "field": field,
-                    "value": float(m.group(3)),
+                    "type": "set", "ticker": m.group(1).upper(),
+                    "field": field, "value": float(m.group(3)),
                 })
             else:
                 commands.append({"type": "error", "message": f"Unknown field: '{m.group(2)}'"})
@@ -304,36 +357,39 @@ def _parse_commands(body: str, default_ticker: str = "DXYZ") -> list[dict]:
     return commands
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Apply changes
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_positions_data() -> tuple[dict, list]:
+    path = ROOT / "config" / "positions.json"
+    with open(path) as f:
+        data = json.load(f)
+    return data, data.get("positions", [])
+
+
+def _save_positions_data(data: dict) -> None:
+    path = ROOT / "config" / "positions.json"
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    logger.info("positions.json saved.")
+
 
 def _apply_set_commands(commands: list[dict]) -> tuple[list[str], list[str]]:
-    """
-    Apply 'set' commands to positions.json.
-    Returns (success_lines, error_lines).
-    """
-    positions_path = ROOT / "config" / "positions.json"
-    with open(positions_path) as f:
-        data = json.load(f)
-
-    positions = data.get("positions", [])
+    data, positions = _load_positions_data()
     successes, errors = [], []
     changed = False
 
     for cmd in commands:
         if cmd["type"] != "set":
             continue
-
         ticker = cmd["ticker"]
         field  = cmd["field"]
         value  = cmd["value"]
-
         pos = next((p for p in positions if p.get("ticker", "").upper() == ticker), None)
         if not pos:
             errors.append(f"${ticker} not found in your positions.")
             continue
-
         old = pos.get(field, "not set")
         pos[field] = ALLOWED_FIELDS[field](value)
         successes.append(f"${ticker}  {field}:  {old}  →  {value}")
@@ -341,19 +397,129 @@ def _apply_set_commands(commands: list[dict]) -> tuple[list[str], list[str]]:
         changed = True
 
     if changed:
-        with open(positions_path, "w") as f:
-            json.dump(data, f, indent=2)
-        logger.info("positions.json saved with updates.")
-
+        _save_positions_data(data)
     return successes, errors
 
 
-# ---------------------------------------------------------------------------
-# Confirmation emails
-# ---------------------------------------------------------------------------
+def _apply_add_command(cmd: dict) -> tuple[str, str]:
+    """
+    Add a new position to positions.json.
+    Returns (success_msg, error_msg) — one will be empty.
+    """
+    ticker = cmd["ticker"]
+    fields = cmd.get("fields", {})
+    parse_errors = cmd.get("errors", [])
 
-def _send_confirmation(successes: list, errors: list, parse_errors: list,
-                        original_subject: str) -> None:
+    if parse_errors:
+        return "", f"Parse errors for add {ticker}: {'; '.join(parse_errors)}"
+
+    # Validate required fields
+    missing = ADD_REQUIRED - set(fields.keys())
+    if missing:
+        return "", (
+            f"Cannot add ${ticker} — missing required fields: "
+            f"{', '.join(sorted(missing))}. "
+            f"Format: add {ticker} entry=X shares=X target=X stop=X"
+        )
+
+    data, positions = _load_positions_data()
+
+    # Check if already exists
+    if any(p.get("ticker", "").upper() == ticker for p in positions):
+        return "", f"${ticker} already exists. Use 'set {ticker} field = value' to update it."
+
+    entry  = float(fields["entry_price"])
+    shares = float(fields["shares"])
+
+    new_pos = {
+        "ticker":           ticker,
+        "company_name":     fields.get("company_name", ticker),
+        "entry_price":      entry,
+        "shares":           shares,
+        "position_value":   round(entry * shares, 2),
+        "thesis_type":      "manual",
+        "thesis_description": fields.get("notes", ""),
+        "target_exit":      float(fields["target_exit"]),
+        "stop_loss":        float(fields["stop_loss"]),
+        "date_entered":     datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "instant_alert_triggers": [],
+        "sell_signals":     [],
+        "monitor_frequency_minutes": 30,
+        "notes":            fields.get("notes", "Added via email command."),
+    }
+
+    positions.append(new_pos)
+    data["positions"] = positions
+    _save_positions_data(data)
+
+    logger.info(f"Added new position: ${ticker}")
+    return (
+        f"${ticker} added — entry ${entry:.2f} × {int(shares)} shares, "
+        f"target ${fields['target_exit']:.2f}, stop ${fields['stop_loss']:.2f}",
+        ""
+    )
+
+
+def _apply_remove_command(ticker: str) -> tuple[str, str]:
+    """
+    Remove a position from positions.json.
+    Returns (success_msg, error_msg).
+    """
+    data, positions = _load_positions_data()
+
+    original_count = len(positions)
+    data["positions"] = [p for p in positions if p.get("ticker", "").upper() != ticker]
+
+    if len(data["positions"]) == original_count:
+        return "", f"${ticker} not found in your positions."
+
+    _save_positions_data(data)
+    logger.info(f"Removed position: ${ticker}")
+    return f"${ticker} removed from positions.", ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Confirmation & response emails
+# ─────────────────────────────────────────────────────────────────────────────
+
+COMMAND_GUIDE_HTML = """
+<div style="background:#F8F9FA;border-left:3px solid #3498DB;
+            padding:14px 16px;margin-top:16px;font-size:12px;color:#555;
+            font-family:monospace;line-height:1.8;">
+  <b style="font-family:Arial;font-size:13px;color:#2C3E50;">Full Command Reference</b><br><br>
+
+  <b style="color:#27AE60;">── UPDATE a field ─────────────────────────</b><br>
+  set target_exit = 90<br>
+  set stop_loss = 45<br>
+  set shares = 20<br>
+  set entry_price = 10.50<br>
+  set position_value = 500<br>
+  set AAPL target_exit = 200 &nbsp;<i style="color:#888;">(specify ticker)</i><br><br>
+
+  <b style="color:#3498DB;">── ADD a new stock ─────────────────────────</b><br>
+  add AAPL entry=182.50 shares=5 target=220 stop=160<br>
+  add TSLA entry=250 shares=3 target=400 stop=200 name=Tesla Inc<br><br>
+
+  <b style="color:#E74C3C;">── REMOVE a stock ──────────────────────────</b><br>
+  remove AAPL<br><br>
+
+  <b style="color:#8E44AD;">── INFO ────────────────────────────────────</b><br>
+  status &nbsp;&nbsp;<i style="color:#888;">(full positions table)</i><br>
+  list &nbsp;&nbsp;&nbsp;&nbsp;<i style="color:#888;">(same as status)</i><br>
+  help &nbsp;&nbsp;&nbsp;&nbsp;<i style="color:#888;">(sends this guide)</i><br><br>
+
+  <span style="font-family:Arial;font-size:11px;color:#999;">
+  Changes take effect on the next 30-min scan cycle.
+  </span>
+</div>"""
+
+
+def _send_confirmation(
+    successes: list,
+    errors: list,
+    parse_errors: list,
+    original_subject: str,
+) -> None:
     now = datetime.now(timezone.utc).strftime("%B %d %Y  %H:%M UTC")
     rows_html = ""
 
@@ -371,11 +537,11 @@ def _send_confirmation(successes: list, errors: list, parse_errors: list,
     if not rows_html:
         rows_html = (
             "<tr><td style='padding:8px 12px;font-size:13px;color:#888;'>"
-            "No valid commands were found. See format guide below.</td></tr>"
+            "No valid commands found. See format guide below.</td></tr>"
         )
 
     html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;">
       <div style="background:{HEADER_BG};padding:18px;text-align:center;color:white;">
         <div style="font-size:18px;font-weight:bold;">COMMAND CONFIRMED</div>
         <div style="font-size:11px;opacity:0.7;margin-top:4px;">{now}</div>
@@ -385,22 +551,11 @@ def _send_confirmation(successes: list, errors: list, parse_errors: list,
         <table style="width:100%;border-collapse:collapse;border:1px solid #eee;">
           {rows_html}
         </table>
-        <div style="background:#F8F9FA;border-left:3px solid #3498DB;
-                    padding:12px;margin-top:16px;font-size:12px;color:#555;">
-          <b>Command format reminder:</b><br><br>
-          <code>set target_exit = 90</code><br>
-          <code>set stop_loss = 50</code><br>
-          <code>set shares = 20</code><br>
-          <code>set entry_price = 10.50</code><br>
-          <code>set DXYZ target_exit = 90</code>&nbsp; (use ticker for multiple positions)<br>
-          <code>status</code>&nbsp; (get full positions summary)<br>
-          <br>
-          Changes take effect on the next scheduled scan.
-        </div>
+        {COMMAND_GUIDE_HTML}
       </div>
     </div>"""
 
-    send_report_email(f"Command Confirmed — Stock Monitor", html)
+    send_report_email("Command Confirmed — Stock Monitor", html)
 
 
 def _send_status_email(positions: list[dict]) -> None:
@@ -408,6 +563,7 @@ def _send_status_email(positions: list[dict]) -> None:
     rows = ""
     for p in positions:
         ticker = p.get("ticker", "")
+        pv = p.get("entry_price", 0) * p.get("shares", 0)
         rows += f"""
         <tr style="border-bottom:1px solid #eee;">
           <td style="padding:8px 10px;font-weight:bold;">${ticker}</td>
@@ -416,10 +572,11 @@ def _send_status_email(positions: list[dict]) -> None:
           <td style="padding:8px 10px;color:#27AE60;font-weight:bold;">${p.get('target_exit','—')}</td>
           <td style="padding:8px 10px;color:#E74C3C;font-weight:bold;">${p.get('stop_loss','—')}</td>
           <td style="padding:8px 10px;">{int(p.get('shares', 0))}</td>
+          <td style="padding:8px 10px;color:#888;">${pv:,.0f}</td>
         </tr>"""
 
     html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:580px;margin:0 auto;">
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;">
       <div style="background:{HEADER_BG};padding:18px;text-align:center;color:white;">
         <div style="font-size:18px;font-weight:bold;">POSITIONS STATUS</div>
         <div style="font-size:11px;opacity:0.7;margin-top:4px;">{now}</div>
@@ -434,26 +591,40 @@ def _send_status_email(positions: list[dict]) -> None:
               <th style="padding:8px 10px;text-align:left;">Target</th>
               <th style="padding:8px 10px;text-align:left;">Stop</th>
               <th style="padding:8px 10px;text-align:left;">Shares</th>
+              <th style="padding:8px 10px;text-align:left;">Value</th>
             </tr>
           </thead>
           <tbody>{rows}</tbody>
         </table>
-        <div style="background:#F8F9FA;border-left:3px solid #3498DB;
-                    padding:12px;margin-top:16px;font-size:12px;color:#555;">
-          <b>To update any value, email yourself with subject containing "command":</b><br><br>
-          <code>set target_exit = 90</code><br>
-          <code>set stop_loss = 50</code><br>
-          <code>set shares = 20</code>
-        </div>
+        {COMMAND_GUIDE_HTML}
       </div>
     </div>"""
 
     send_report_email("Positions Status — Stock Monitor", html)
 
 
-# ---------------------------------------------------------------------------
+def _send_help_email() -> None:
+    now = datetime.now(timezone.utc).strftime("%B %d %Y  %H:%M UTC")
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;">
+      <div style="background:{HEADER_BG};padding:18px;text-align:center;color:white;">
+        <div style="font-size:18px;font-weight:bold;">COMMAND HELP</div>
+        <div style="font-size:11px;opacity:0.7;margin-top:4px;">{now}</div>
+      </div>
+      <div style="padding:16px;">
+        <p style="font-size:13px;color:#555;">
+          Send any of the commands below in an email to yourself.<br>
+          Subject must contain <b>monitor</b> or <b>command</b>.
+        </p>
+        {COMMAND_GUIDE_HTML}
+      </div>
+    </div>"""
+    send_report_email("Command Help — Stock Monitor", html)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main entry
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def process_command_emails() -> int:
     gmail_address = os.getenv("GMAIL_ADDRESS", "")
@@ -476,24 +647,49 @@ def process_command_emails() -> int:
     total = 0
     for msg in msgs:
         commands = _parse_commands(msg["body"])
+        successes, errors = [], []
 
-        # Handle status
-        if any(c["type"] == "status" for c in commands):
-            _send_status_email(load_positions())
+        for cmd in commands:
+            ctype = cmd["type"]
 
-        # Handle set commands
-        set_cmds   = [c for c in commands if c["type"] == "set"]
-        err_cmds   = [c["message"] for c in commands if c["type"] == "error"]
+            if ctype == "status":
+                _send_status_email(load_positions())
 
-        successes, apply_errors = _apply_set_commands(set_cmds) if set_cmds else ([], [])
-        _send_confirmation(successes, apply_errors, err_cmds, msg["subject"])
+            elif ctype == "help":
+                _send_help_email()
 
-        total += len(set_cmds)
-        logger.info(f"Processed {len(set_cmds)} command(s) from '{msg['subject']}'")
+            elif ctype == "set":
+                ok, err = _apply_set_commands([cmd])
+                successes.extend(ok)
+                errors.extend(err)
+                total += 1
 
-        # Record UID so we never process this email again
+            elif ctype == "add":
+                ok_msg, err_msg = _apply_add_command(cmd)
+                if ok_msg:
+                    successes.append(ok_msg)
+                    total += 1
+                if err_msg:
+                    errors.append(err_msg)
+
+            elif ctype == "remove":
+                ok_msg, err_msg = _apply_remove_command(cmd["ticker"])
+                if ok_msg:
+                    successes.append(ok_msg)
+                    total += 1
+                if err_msg:
+                    errors.append(err_msg)
+
+            elif ctype == "error":
+                errors.append(cmd["message"])
+
+        parse_errors = []
+        _send_confirmation(successes, errors, parse_errors, msg["subject"])
+        logger.info(f"Processed {total} command(s) from '{msg['subject']}'")
+
+        # Mark as processed
         processed = _load_processed_uids()
-        processed.add(msg["uid_str"])
+        processed.add(msg["folder_uid_key"])
         _save_processed_uids(processed)
 
     client.logout()
