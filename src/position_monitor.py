@@ -29,6 +29,7 @@ from utils import (
     load_sent_alerts,
     save_sent_alerts,
     setup_logging,
+    COMMAND_FOOTER_HTML,
 )
 from alert_system import send_position_alert, send_tier1_sms, _get_credentials, _smtp_send
 from edgar_scanner import scan_for_mergers, scan_for_registration_statements
@@ -367,6 +368,7 @@ def _build_alert_html(
         </div>"""
 
     disclaimer = (
+        COMMAND_FOOTER_HTML +
         '<p style="color:#999;font-size:11px;border-top:1px solid #eee;'
         'padding-top:12px;margin-top:20px;">'
         "THIS IS NOT INVESTMENT ADVICE. This is an automated informational alert. "
@@ -473,7 +475,8 @@ def _build_no_alert_html(
           <td style="padding:6px 4px;">{shares}</td>
         </tr>
       </table>
-      <p style="color:#999;font-size:11px;margin-top:16px;">
+      {COMMAND_FOOTER_HTML}
+      <p style="color:#999;font-size:11px;margin-top:8px;">
         {now_utc} — THIS IS NOT INVESTMENT ADVICE.
       </p>
     </div>"""

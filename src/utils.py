@@ -56,3 +56,37 @@ def get_env(key: str, required: bool = True) -> str:
     if required and not val:
         raise EnvironmentError(f"Required environment variable '{key}' is not set.")
     return val
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared email footer — appended to every outgoing email
+# ─────────────────────────────────────────────────────────────────────────────
+
+COMMAND_FOOTER_HTML = """
+<div style="margin-top:24px;border-top:1px solid #E0E0E0;padding-top:16px;">
+  <div style="font-size:11px;font-weight:bold;color:#888;letter-spacing:1px;
+              text-transform:uppercase;margin-bottom:10px;">
+    Quick Commands &mdash; Email yourself with subject <span style="color:#3498DB;">"MONITOR COMMAND"</span>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;">
+    <tr>
+      <td style="padding:3px 8px;width:50%;vertical-align:top;">
+        <span style="color:#27AE60;font-weight:bold;">UPDATE</span><br>
+        <code>set target_exit = 90</code><br>
+        <code>set stop_loss = 45</code><br>
+        <code>set shares = 20</code><br>
+        <code>set entry_price = 10.50</code><br>
+        <code>set AAPL target_exit = 200</code>
+      </td>
+      <td style="padding:3px 8px;width:50%;vertical-align:top;">
+        <span style="color:#3498DB;font-weight:bold;">MANAGE</span><br>
+        <code>add AAPL entry=182 shares=5 target=220 stop=160</code><br>
+        <code>remove AAPL</code><br><br>
+        <span style="color:#8E44AD;font-weight:bold;">INFO</span><br>
+        <code>status</code> &nbsp;&middot;&nbsp;
+        <code>list</code> &nbsp;&middot;&nbsp;
+        <code>help</code>
+      </td>
+    </tr>
+  </table>
+</div>"""

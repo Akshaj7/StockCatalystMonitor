@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils import ROOT, load_positions, setup_logging
+from utils import ROOT, load_positions, setup_logging, COMMAND_FOOTER_HTML
 
 logger = setup_logging("report_builder")
 
@@ -87,6 +87,11 @@ def _html_wrapper(title: str, body_html: str, generated_at: str) -> str:
   </div>
 
   {body_html}
+
+  <!-- Command quick-reference -->
+  <div style="padding:0 20px;">
+    {COMMAND_FOOTER_HTML}
+  </div>
 
   <!-- Footer -->
   <div style="background:#F0F0F0;padding:14px 20px;text-align:center;
