@@ -155,8 +155,8 @@ def _has_any_command(body: str) -> bool:
         or re.search(r"^status\s*$", bl, re.MULTILINE)
         or re.search(r"^list\s*$", bl, re.MULTILINE)
         or re.search(r"^help\s*$", bl, re.MULTILINE)
-        or re.search(r"^add\s+[A-Z]{1,5}\b", bl, re.MULTILINE)
-        or re.search(r"^remove\s+[A-Z]{1,5}\b", bl, re.MULTILINE)
+        or re.search(r"^add\s+[A-Za-z]{1,6}\b", bl, re.MULTILINE)
+        or re.search(r"^remove\s+[A-Za-z]{1,6}\b", bl, re.MULTILINE)
     )
 
 
