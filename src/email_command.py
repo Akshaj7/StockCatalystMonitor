@@ -160,10 +160,21 @@ def _has_any_command(body: str) -> bool:
     )
 
 
-def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[dict]:
+def _build_from_query(senders: list[str], since_date: str) -> str:
+    """Build an IMAP search query that matches any of the given sender addresses."""
+    # IMAP OR is binary: OR crit1 crit2. For N senders, nest OR pairs right-to-left.
+    terms = [f'FROM "{addr}"' for addr in senders]
+    query = terms[-1]
+    for term in reversed(terms[:-1]):
+        query = f"OR {term} {query}"
+    return f"({query}) SINCE {since_date}"
+
+
+def _fetch_command_emails(client: imaplib.IMAP4_SSL, authorized_senders: list[str]) -> list[dict]:
     from datetime import timedelta
     processed = _load_processed_uids()
     since_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%d-%b-%Y")
+    search_query = _build_from_query(authorized_senders, since_date)
 
     folders = [("INBOX", "INBOX"), ("[Gmail]/Sent Mail", "SENT")]
     results = []
@@ -177,7 +188,7 @@ def _fetch_command_emails(client: imaplib.IMAP4_SSL, from_address: str) -> list[
         except Exception:
             continue
 
-        status, data = client.search(None, f'FROM "{from_address}" SINCE {since_date}')
+        status, data = client.search(None, search_query)
         if status != "OK" or not data[0]:
             continue
 
@@ -634,11 +645,20 @@ def process_command_emails() -> int:
         logger.error("GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set.")
         return 0
 
+    # Accept commands from the Gmail account itself AND all report recipients
+    recipient_env = os.getenv("RECIPIENT_EMAIL", "")
+    authorized_senders = list({
+        addr.strip().lower()
+        for addr in [gmail_address] + recipient_env.split(",")
+        if addr.strip()
+    })
+    logger.info(f"Accepting commands from: {', '.join(authorized_senders)}")
+
     client = _connect(gmail_address, app_password)
     if not client:
         return 0
 
-    msgs = _fetch_command_emails(client, gmail_address)
+    msgs = _fetch_command_emails(client, authorized_senders)
     if not msgs:
         logger.info("No command emails found.")
         client.logout()
