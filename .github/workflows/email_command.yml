@@ -29,10 +29,10 @@ jobs:
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/email_command.py
 
-      - name: Commit updated positions.json if changed
+      - name: Commit updated state files if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add config/positions.json
-          git diff --staged --quiet || git commit -m "Update positions via email command [skip ci]"
+          git add config/positions.json state/processed_command_uids.json
+          git diff --staged --quiet || git commit -m "Update positions and processed UIDs [skip ci]"
           git push
