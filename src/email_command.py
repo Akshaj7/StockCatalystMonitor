@@ -138,11 +138,16 @@ def _strip_quoted_reply(body: str) -> str:
     clean_lines = []
     for line in body.splitlines():
         stripped = line.strip()
+        # Stop at signature separator or forwarded-message divider
         if stripped == "--":
             break
+        if re.match(r"^-{5,}\s*(forwarded message|original message)\s*-{5,}", stripped, re.IGNORECASE):
+            break
+        # Stop at "On <date> ... wrote:" (Gmail reply header)
+        if re.match(r"^On .{5,120}wrote:\s*$", stripped, re.IGNORECASE):
+            break
+        # Skip lines that are quoted ("> text")
         if stripped.startswith(">"):
-            continue
-        if re.match(r"^On .{5,80}wrote:$", stripped, re.IGNORECASE):
             continue
         clean_lines.append(line)
     return "\n".join(clean_lines)
