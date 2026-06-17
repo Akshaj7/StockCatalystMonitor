@@ -15,6 +15,22 @@
       "sell_signals": [],
       "monitor_frequency_minutes": 30,
       "notes": "Added via email command."
+    },
+    {
+      "ticker": "SOFI",
+      "company_name": "SOFI",
+      "entry_price": 17.98,
+      "shares": 10.0,
+      "position_value": 179.8,
+      "thesis_type": "manual",
+      "thesis_description": "",
+      "target_exit": 32.0,
+      "stop_loss": 15.0,
+      "date_entered": "2026-06-17",
+      "instant_alert_triggers": [],
+      "sell_signals": [],
+      "monitor_frequency_minutes": 30,
+      "notes": "Added via email command."
     }
   ]
 }
