@@ -30,9 +30,9 @@ USER_AGENT = f"StockCatalystMonitor/1.0 {_contact}"
 _MIN_INTERVAL = 0.11
 
 
-def _get_date_range() -> tuple[str, str]:
+def _get_date_range(days_back: int = 1) -> tuple[str, str]:
     now = datetime.now(timezone.utc)
-    return (now - timedelta(hours=24)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")
+    return (now - timedelta(days=days_back)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")
 
 
 def _make_session() -> requests.Session:
@@ -290,6 +290,101 @@ def scan_for_insider_buys(
         f"Scan complete — {len(qualifying)} qualifying purchase(s) found | "
         f"{filings_parsed} parsed, {filings_skipped} skipped"
     )
+    return qualifying
+
+
+def scan_watchlist_insider_buys(
+    tickers: list[str],
+    min_value: int = 50000,
+    transaction_codes: list = None,
+    days_back: int = 2,
+) -> list[dict]:
+    """
+    Directly scan Form 4 filings for specific tickers using EDGAR EFTS ticker search.
+    Bypasses the general 150-filing cap — searches per ticker so no position is missed.
+    Form 4s are filed under the INSIDER's CIK, not the company's, so the EFTS full-text
+    search (which indexes <issuerTradingSymbol>) is the correct lookup method.
+    Uses days_back=2 by default to catch filings that arrived after the last scan.
+    """
+    if not tickers:
+        return []
+    if transaction_codes is None:
+        transaction_codes = ["P"]
+
+    start_date, end_date = _get_date_range(days_back)
+    session = _make_session()
+    qualifying: list[dict] = []
+    seen_adsh: set[str] = set()
+
+    logger.info(f"Watchlist insider scan: {tickers} ({start_date} → {end_date})")
+
+    for ticker in tickers:
+        logger.info(f"  Checking {ticker}...")
+        # Search EFTS for Form 4s where <issuerTradingSymbol> = ticker
+        params = {
+            "q": f'"{ticker}"',
+            "forms": "4",
+            "dateRange": "custom",
+            "startdt": start_date,
+            "enddt": end_date,
+            "from": 0,
+        }
+        url = f"{EFTS_BASE_URL}?{urlencode(params)}"
+        time.sleep(_MIN_INTERVAL)
+        try:
+            resp = session.get(url, timeout=30)
+            resp.raise_for_status()
+            hits = resp.json().get("hits", {}).get("hits", [])
+        except Exception as exc:
+            logger.error(f"  {ticker}: EFTS search failed: {exc}")
+            continue
+
+        for hit in hits:
+            src = hit.get("_source", {})
+            adsh = src.get("adsh", "")
+            if not adsh or adsh in seen_adsh:
+                continue
+
+            # Confirm issuer ticker matches (filter false positives)
+            display_names = str(src.get("display_names", ""))
+            if ticker.upper() not in display_names.upper():
+                continue
+
+            xml_url = _xml_url_from_hit(hit)
+            if not xml_url:
+                continue
+
+            time.sleep(_MIN_INTERVAL)
+            try:
+                r = session.get(xml_url, timeout=15)
+                if not r.ok or r.text.strip().startswith("<!"):
+                    continue
+            except Exception:
+                continue
+
+            transactions = _parse_form4_xml(r.text, adsh)
+            seen_adsh.add(adsh)
+
+            for txn in transactions:
+                # Confirm the transaction is for our watched ticker
+                if txn.get("ticker", "").upper() != ticker.upper():
+                    continue
+                if txn["transaction_code"] not in transaction_codes:
+                    continue
+                if txn["acquired_or_disposed"] != "A":
+                    continue
+                if txn["total_value"] < min_value:
+                    continue
+
+                label = " [CEO]" if txn["is_ceo"] else " [CFO]" if txn["is_cfo"] else ""
+                logger.info(
+                    f"  ★ WATCHLIST HIT: {txn['company_name']} ({txn['ticker']}) | "
+                    f"{txn['owner_name']}{label} | ${txn['total_value']:,.0f}"
+                )
+                qualifying.append(txn)
+
+    qualifying.sort(key=lambda x: x["total_value"], reverse=True)
+    logger.info(f"Watchlist scan complete — {len(qualifying)} qualifying purchase(s)")
     return qualifying
 
 

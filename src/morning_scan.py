@@ -17,9 +17,9 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils import ROOT, setup_logging
+from utils import ROOT, setup_logging, load_positions
 from edgar_scanner import scan_for_mergers
-from insider_scanner import scan_for_insider_buys
+from insider_scanner import scan_for_insider_buys, scan_watchlist_insider_buys
 from groq_analyzer import analyze_batch
 from report_builder import build_morning_report, build_no_news_report
 from alert_system import send_morning_report, send_evening_report
@@ -96,10 +96,33 @@ def main():
 
     # ── Phase 2: Insider buying scan ───────────────────────────────────────
     logger.info("Phase 2: Scanning Form 4 insider buying...")
+    min_value = filters.get("insider_minimum_purchase", 50000)
+    txn_codes = filters.get("insider_transaction_codes", ["P"])
+
     insider_results = scan_for_insider_buys(
-        min_value=filters.get("insider_minimum_purchase", 50000),
-        transaction_codes=filters.get("insider_transaction_codes", ["P"]),
+        min_value=min_value,
+        transaction_codes=txn_codes,
     )
+
+    # Watchlist scan — checks positions directly, bypasses the 150-filing cap
+    positions = load_positions()
+    watchlist_tickers = [p["ticker"] for p in positions if p.get("ticker") and p.get("ticker") != "N/A"]
+    if watchlist_tickers:
+        logger.info(f"Phase 2b: Watchlist insider scan for {watchlist_tickers}...")
+        watchlist_results = scan_watchlist_insider_buys(
+            tickers=watchlist_tickers,
+            min_value=min_value,
+            transaction_codes=txn_codes,
+            days_back=2,
+        )
+        # Merge, dedup by accession number
+        existing_adsh = {r["accession_no"] for r in insider_results}
+        for r in watchlist_results:
+            if r["accession_no"] not in existing_adsh:
+                insider_results.append(r)
+                existing_adsh.add(r["accession_no"])
+        logger.info(f"  → {len(watchlist_results)} watchlist hit(s) found")
+
     logger.info(f"  → {len(insider_results)} qualifying insider purchases found")
 
     # ── Phase 3: Groq AI analysis (top filings only) ───────────────────────
