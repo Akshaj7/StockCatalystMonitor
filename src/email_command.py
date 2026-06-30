@@ -379,7 +379,7 @@ def _parse_commands(body: str, default_ticker: str = "DXYZ") -> list[dict]:
 
 def _load_positions_data() -> tuple[dict, list]:
     path = ROOT / "config" / "positions.json"
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig") as f:
         data = json.load(f)
     return data, data.get("positions", [])
 
