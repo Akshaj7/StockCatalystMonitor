@@ -1,7 +1,10 @@
 {
   "sent_alerts": [
     "AAPL:TARGET_HIT:2026-06-30",
-    "AAPL:TARGET_HIT:2026-07-01"
+    "AAPL:TARGET_HIT:2026-07-01",
+    "AAPL:CHECKIN:2026-07-01",
+    "PLTR:CHECKIN:2026-07-01",
+    "SOFI:CHECKIN:2026-07-01"
   ],
-  "last_updated": "2026-07-01T04:43:38.161713+00:00"
+  "last_updated": "2026-07-01T08:52:36.840163+00:00"
 }
